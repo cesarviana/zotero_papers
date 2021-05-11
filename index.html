@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test</title>
+</head>
+<body>
+    <div id="app">
+        <h1>Publicações</h1>
+        <ul>
+            <li v-for="type in types" :key="type.type">
+                <a href="#" @click="showType = type">{{ type.name }}</a>
+            </li>
+            <li v-show="filtering"><a href="#" @click="showType = undefined">Tudo</a></li>
+        </ul>
+
+        <h2 v-if="filtering">{{ showType.name }}</h2>
+        <div v-for="year in sortedYears" :key="year.number">
+            <h2 v-show="notFiltering"> {{ year.number }} </h2>
+            <div class="publication" v-for="publication in year.publications" :key="publication.key">
+                <p v-show="notFiltering || (publication.data.itemType == showType.type)">
+                    <span v-html="publication.citation"></span>
+                    <span v-if="publication.data.DOI" > DOI: 
+                        <a :href="`https://doi.org/${publication.data.DOI}`" target="_blank">
+                            {{publication.data.DOI}}.
+                        </a>
+                    </span>
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/vue@2"></script>
+    <script src="https://unpkg.com/axios@0.2.1/dist/axios.min.js"></script>
+    <script>
+
+        // https://www.zotero.org/groups/2302585/univali_lite/collections/GJIVWGWQ
+        
+        const app = new Vue({
+            el: '#app',
+            data: {
+                years: {},
+                publications: [],
+                types: [
+                    { name: 'Artigos de Conferências', type: 'conferencePaper' },
+                    { name: 'Artigos de Revistas', type: 'journalArticle' },
+                    { name: 'Livros Capítulos de Livros', type: 'book' },
+                    { name: 'Capítulos de Livros', type: 'bookSection' },
+                    { name: 'Monografias', type: 'thesis' },
+                    { name: 'Blogs', type: 'blogPost' },
+                ],
+                showType: undefined
+            },
+            async created() {
+                const items = await axios.get("https://api.zotero.org/groups/2302585/collections/83YIGLLI/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note")
+                const publications = items.filter(item => typeOf(item) != "attachment")
+                const attachments = items.filter(item => typeOf(item) == "attachment")
+                
+                for(let publication of publications)
+                {
+                    addAttachmentsFor(publication, attachments)
+                }
+                
+                this.years = groupByYear(publications)
+                this.publications = publications
+            },
+            computed: {
+                sortedYears() {
+                    return Object.keys(this.years).sort().reverse().map(number => {
+                        return {
+                            number,
+                            publications: this.years[number].publications
+                        }
+                    })
+                },
+                notFiltering() {
+                    return !this.filtering
+                },
+                filtering() {
+                    return this.showType !== undefined
+                }
+            },
+            methods: {
+                publicationsByType(type) {
+                    return this.publications.filter(p=> typeOf(p) == type)
+                }
+            }
+        })
+        function typeOf(item) {
+            return item.data.itemType
+        }
+        function areRelated(publication, attachment)
+        {
+            return keyOf(publication) == parentKey(attachment)
+        }
+        function keyOf(item)
+        {
+            return item.key
+        }
+        function parentKey(item)
+        {
+            return item.data.parentItem
+        }
+        function addAttachmentsFor(publication, attachments)
+        {
+            publication.attachments = attachments.filter(attachment => areRelated(publication, attachment))
+        }
+        function attach(publication, attachment)
+        {
+            if(!publication.attachments) 
+                publication.attachments = []
+            publication.attachments.push(attachment)
+        }
+        function getYearOf(publication)
+        {
+            const matches = publication.data.date.match(/\d{4}/g)
+            if(matches.length > 0)
+                return new Number(matches[0])
+            return "Sem ano"
+        }
+        function isNew(year, years)
+        {
+            return years[year] === undefined
+        }
+        function groupByYear(publications)
+        {
+            const years = {}
+            for(let publication of publications)
+            {
+                const year = getYearOf(publication)
+                if(isNew(year, years)){
+                    years[year] = {
+                        publications: []
+                    }
+                }
+                years[year].publications.push(publication)
+            }
+            return years;
+        }
+    </script>
+</body>
+</html>
