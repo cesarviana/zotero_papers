@@ -1,136 +1,215 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/semantic-ui@2.3.1/dist/semantic.min.css">
     <title>Test</title>
-</head>
-<body>
-    <div id="app">
-        <h1>Publicações</h1>
-        <ul>
-            <li v-for="type in types" :key="type.type">
-                <a href="#" @click="showType = type">{{ type.name }}</a>
-            </li>
-            <li v-show="filtering"><a href="#" @click="showType = undefined">Tudo</a></li>
-        </ul>
+    <style>
+        .publication-types {
+            display: flex;
+        }
 
-        <h2 v-if="filtering">{{ showType.name }}</h2>
-        <div v-for="year in sortedYears" :key="year.number">
-            <h2 v-show="notFiltering"> {{ year.number }} </h2>
-            <div class="publication" v-for="publication in year.publications" :key="publication.key">
-                <p v-show="notFiltering || (publication.data.itemType == showType.type)">
-                    <span v-html="publication.citation"></span>
-                    <span v-if="publication.data.DOI" > DOI: 
-                        <a :href="`https://doi.org/${publication.data.DOI}`" target="_blank">
-                            {{publication.data.DOI}}.
-                        </a>
-                    </span>
-                </p>
+        .publications {
+            padding: 1vw;
+        }
+
+        .publication {
+            margin: 0 0 .5vw .5vw;
+            padding: 2vw;
+            border: 1px solid gray;
+            border-radius: 1vw;
+        }
+
+        h2 {
+            margin-top: 2vw !important;
+        }
+
+        @media (min-width: 720px) {
+            .years {
+                display: flex;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app" class="ui container">
+        <h1>Publicações</h1>
+
+
+        <div class="ui pointing menu">
+
+            <a class="item" :class="{ active: notFiltering }" @click="showType = undefined">
+                Tudo
+            </a>
+
+            <a v-for="type in types" :key="type.type" class="item" :class="{ active: type == showType }"
+                @click="showType = type">
+                {{ type.name }}
+            </a>
+
+            <div class="right menu">
+                <div class="item">
+                    <div class="ui transparent icon input">
+                        <input type="text" placeholder="Pesquisar..." v-model="searchText">
+                        <i class="search link icon"></i>
+                    </div>
+                </div>
             </div>
         </div>
+        <div class="ui segment" :class="{loading}">
+            <div v-for="year in sortedYears" :key="year.number" class="years">
+                <h2> {{ year.number }} </h2>
+                <div class="publications ui cards">
+                    <div class="publication card" v-for="publication in year.publications" :key="publication.key">
+                        <p class="content">
+                            <span v-html="publication.citation"></span>
+                            <span v-if="publication.data.DOI"> DOI:
+                                <a :href="`https://doi.org/${publication.data.DOI}`" target="_blank">
+                                    {{publication.data.DOI}}.
+                                </a>
+                            </span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div v-if="sortedYears.length == 0 && publications.length > 0">Nenhum resultado.</div>
+
+        </div>
+
     </div>
-    
+
     <script src="https://cdn.jsdelivr.net/npm/vue@2"></script>
     <script src="https://unpkg.com/axios@0.2.1/dist/axios.min.js"></script>
+    <script src="https://unpkg.com/semantic-ui@2.3.1/dist/semantic.min.js"></script>
     <script>
 
-        // https://www.zotero.org/groups/2302585/univali_lite/collections/GJIVWGWQ
-        
+        const GROUP_ID = '2302585'
+        const COLLECTION_ID = '83YIGLLI'
+
         const app = new Vue({
             el: '#app',
             data: {
                 years: {},
                 publications: [],
-                types: [
+                allowedTypes: [
                     { name: 'Artigos de Conferências', type: 'conferencePaper' },
                     { name: 'Artigos de Revistas', type: 'journalArticle' },
-                    { name: 'Livros Capítulos de Livros', type: 'book' },
+                    { name: 'Livros', type: 'book' },
                     { name: 'Capítulos de Livros', type: 'bookSection' },
                     { name: 'Monografias', type: 'thesis' },
                     { name: 'Blogs', type: 'blogPost' },
                 ],
-                showType: undefined
+                showType: undefined,
+                searchText: ''
             },
             async created() {
-                const items = await axios.get("https://api.zotero.org/groups/2302585/collections/83YIGLLI/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note")
-                const publications = items.filter(item => typeOf(item) != "attachment")
-                const attachments = items.filter(item => typeOf(item) == "attachment")
-                
-                for(let publication of publications)
-                {
-                    addAttachmentsFor(publication, attachments)
-                }
-                
+                const items = await getItems(GROUP_ID, COLLECTION_ID)
+
+                const publications = filterPublications(items)
+                const attachments = filterAttachments(items)
+
+                linkPublicationsAndAttachments(publications, attachments)
+
                 this.years = groupByYear(publications)
                 this.publications = publications
             },
             computed: {
                 sortedYears() {
-                    return Object.keys(this.years).sort().reverse().map(number => {
+                    const sortedYears = Object.keys(this.years).sort().reverse().map(number => {
                         return {
                             number,
                             publications: this.years[number].publications
                         }
                     })
+                    
+                    sortedYears.forEach(year => {
+                        year.publications = year.publications.filter(p=>this.filterPublication(p))
+                    })
+                    
+                    return sortedYears.filter(it => it.publications.length > 0)
                 },
                 notFiltering() {
                     return !this.filtering
                 },
                 filtering() {
                     return this.showType !== undefined
+                },
+                types() {
+                    const types = this.publications.map(p => p.data.itemType)
+                    return this.allowedTypes.filter(t => types.includes(t.type))
+                },
+                loading() {
+                    return this.publications.length == 0
                 }
             },
             methods: {
-                publicationsByType(type) {
-                    return this.publications.filter(p=> typeOf(p) == type)
+                filterPublication(publication)
+                {
+                    if(this.filtering)
+                        if( typeOf(publication) != this.showType.type )
+                            return false
+                    if(this.searchText.length > 0){
+                        const text = publication.citation.toUpperCase()
+                        const search = this.searchText.toUpperCase()
+                        const notFound = text.indexOf(search) == -1
+                        if (notFound)
+                            return false
+                    }
+                    return true
                 }
             }
         })
+        async function getItems(groupId, collectionId) {
+            return axios.get(`https://api.zotero.org/groups/${groupId}/collections/${collectionId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note`)
+        }
+        function filterPublications(items) {
+            return items.filter(item => typeOf(item) != "attachment")
+        }
+        function filterAttachments(items) {
+            return items.filter(item => typeOf(item) == "attachment")
+        }
+        function linkPublicationsAndAttachments(publications, attachments) {
+            for (let publication of publications)
+                addAttachmentsFor(publication, attachments)
+        }
         function typeOf(item) {
             return item.data.itemType
         }
-        function areRelated(publication, attachment)
-        {
+        function areRelated(publication, attachment) {
             return keyOf(publication) == parentKey(attachment)
         }
-        function keyOf(item)
-        {
+        function keyOf(item) {
             return item.key
         }
-        function parentKey(item)
-        {
+        function parentKey(item) {
             return item.data.parentItem
         }
-        function addAttachmentsFor(publication, attachments)
-        {
+        function addAttachmentsFor(publication, attachments) {
             publication.attachments = attachments.filter(attachment => areRelated(publication, attachment))
         }
-        function attach(publication, attachment)
-        {
-            if(!publication.attachments) 
+        function attach(publication, attachment) {
+            if (!publication.attachments)
                 publication.attachments = []
             publication.attachments.push(attachment)
         }
-        function getYearOf(publication)
-        {
+        function getYearOf(publication) {
             const matches = publication.data.date.match(/\d{4}/g)
-            if(matches.length > 0)
+            if (matches.length > 0)
                 return new Number(matches[0])
             return "Sem ano"
         }
-        function isNew(year, years)
-        {
+        function isNew(year, years) {
             return years[year] === undefined
         }
-        function groupByYear(publications)
-        {
+        function groupByYear(publications) {
             const years = {}
-            for(let publication of publications)
-            {
+            for (let publication of publications) {
                 const year = getYearOf(publication)
-                if(isNew(year, years)){
+                if (isNew(year, years)) {
                     years[year] = {
                         publications: []
                     }
@@ -141,4 +220,5 @@
         }
     </script>
 </body>
+
 </html>
