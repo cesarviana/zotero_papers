@@ -6,6 +6,7 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/semantic-ui@2.3.1/dist/semantic.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jqcloud2@2.0.3/dist/jqcloud.min.css">
     <title>Acadêmic Papers</title>
     <style>
         .publication-types {
@@ -32,47 +33,92 @@
                 display: flex;
             }
         }
+
+        .conferencePaper {
+            background: #E7F2F8 !important
+        }
+
+        .journalArticle {
+            background: #fbfbe8 !important
+        }
+
+        .book {
+            background: #91d6e4 !important
+        }
+
+        .bookSection {
+            background: #EFE7BC !important
+        }
+
+        .thesis {
+            background: #facfd4 !important
+        }
+
+        .blogPost {
+            background: #dffff0 !important
+        }
     </style>
 </head>
 
 <body>
     <div id="app" class="ui container">
+        
+        <div id="cloud" style="width: 50vw; height: 20vw; margin: 0 auto"></div>
 
-        <div class="ui pointing menu">
+        <div>
 
-            <a class="item" :class="{ active: notFiltering }" @click="showType = undefined">
+            <a class="ui basic button" :class="{ active: notFiltering }" @click="showType = undefined; updateCloud()">
                 Tudo
             </a>
 
-            <a v-for="type in types" :key="type.type" class="item" :class="{ active: type == showType }"
-                @click="showType = type">
+            <a v-for="type in types" :key="type.type" class="ui button"
+                :class="[showType == type ? 'active' : '', type.type ]" @click="showType = type; updateCloud()">
                 {{ type.name }}
             </a>
 
-            <div class="right menu">
-                <div class="item">
-                    <div class="ui transparent icon input">
-                        <input type="text" placeholder="Pesquisar..." v-model="searchText">
-                        <i class="search link icon"></i>
-                    </div>
+            <div class="ui right aligned container" style="margin-top: 1vw">
+                <div class="ui icon input">
+                    <input type="text" placeholder="Pesquisar..." v-model="searchText">
+                    <i class="search link icon"></i>
                 </div>
             </div>
+
         </div>
-        <div class="ui segment" :class="{loading}">
+
+        <div class="ui segment">
             <div v-for="year in sortedYears" :key="year.number" class="years">
                 <h2> {{ year.number }} </h2>
                 <div class="publications ui cards">
-                    <div class="publication card" v-for="publication in year.publications" :key="publication.key">
+                    <div class="publication card" v-for="publication in year.publications" :key="publication.key"
+                        :class="publication.data.itemType">
                         <p class="content">
                             <span v-html="publication.citation"></span>
-                            <span v-if="publication.data.DOI"> DOI:
+                        </p>
+                        <div class="extra content" style="display:flex; flex-flow:column">
+                            <span v-if="publication.data.DOI">
                                 <a :href="`https://doi.org/${publication.data.DOI}`" target="_blank">
-                                    {{publication.data.DOI}}.
+                                    <i class="icon file outline"></i>
+                                    DOI: {{publication.data.DOI}}.
                                 </a>
                             </span>
-                        </p>
+                            <span v-if="publication.data.url">
+                                <a target="_blank" :href="publication.data.url">
+                                    <i class="icon linkify"></i>
+                                    Acessar
+                                </a>
+                            </span>
+                            <span v-if="!publication.data.url && !publication.data.DOI">
+                                <a target="_blank" :href="`https://google.com.br/search?q=${publication.data.title}`">
+                                    <i class="icon search"></i>
+                                    Buscar
+                                </a>
+                            </span>
+                        </div>
                     </div>
                 </div>
+            </div>
+            <div v-if="loading" class="ui active inverted dimmer">
+                <div class="ui text loader">Carregando</div>
             </div>
             <div v-if="sortedYears.length == 0 && publications.length > 0">Nenhum resultado.</div>
 
@@ -83,6 +129,10 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@2"></script>
     <script src="https://unpkg.com/axios@0.2.1/dist/axios.min.js"></script>
     <script src="https://unpkg.com/semantic-ui@2.3.1/dist/semantic.min.js"></script>
+    
+    <script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jqcloud2@2.0.3/dist/jqcloud.min.js"></script>
+    
     <script>
 
         const GROUP_ID = '2302585'
@@ -91,6 +141,7 @@
         const app = new Vue({
             el: '#app',
             data: {
+                groupId: GROUP_ID,
                 years: {},
                 publications: [],
                 allowedTypes: [
@@ -114,6 +165,8 @@
 
                 this.years = groupByYear(publications)
                 this.publications = publications
+                
+                this.updateCloud()
             },
             computed: {
                 sortedYears() {
@@ -123,11 +176,11 @@
                             publications: this.years[number].publications
                         }
                     })
-                    
+
                     sortedYears.forEach(year => {
-                        year.publications = year.publications.filter(p=>this.filterPublication(p))
+                        year.publications = year.publications.filter(p => this.filterPublication(p))
                     })
-                    
+
                     return sortedYears.filter(it => it.publications.length > 0)
                 },
                 notFiltering() {
@@ -142,15 +195,55 @@
                 },
                 loading() {
                     return this.publications.length == 0
-                }
+                },
+                abstractWords() {
+                    
+                    let abstracts = '';
+                    
+                    for(let year of this.sortedYears)
+                    {
+                        for(let publication of year.publications)
+                        {
+                            abstracts += publication.data.abstractNote
+                        }   
+                    }
+                    
+                    const wordsQuantity = {}
+                    
+                    abstracts.split(" ").forEach(word => {
+                        if(!wordsQuantity[word]) {
+                            wordsQuantity[word] = 1
+                        } else {
+                            wordsQuantity[word]++
+                        }
+                    })
+                    
+                    const wordsArray = []
+                    Object.keys(wordsQuantity).forEach(word=>{
+                        wordsArray.push({
+                            text: word,
+                            weight: wordsQuantity[word]
+                        })
+                    })
+                    const unusedWords = ['para','that','their','está','this','from','este','have','also','half']
+                    return wordsArray.filter(word=>word.text.length > 3).filter(word=>
+                        unusedWords.includes(word.text.toLowerCase()) == false
+                    )
+                },
             },
             methods: {
-                filterPublication(publication)
-                {
-                    if(this.filtering)
-                        if( typeOf(publication) != this.showType.type )
+                updateCloud() {
+                    const words = this.abstractWords
+                    $(document).ready(function(){
+                        $('#cloud').jQCloud('destroy')
+                        $('#cloud').jQCloud(words);
+                    })
+                },
+                filterPublication(publication) {
+                    if (this.filtering)
+                        if (typeOf(publication) != this.showType.type)
                             return false
-                    if(this.searchText.length > 0){
+                    if (this.searchText.length > 0) {
                         const text = publication.citation.toUpperCase()
                         const search = this.searchText.toUpperCase()
                         const notFound = text.indexOf(search) == -1
