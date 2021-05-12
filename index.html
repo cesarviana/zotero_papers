@@ -9,6 +9,40 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jqcloud2@2.0.3/dist/jqcloud.min.css">
     <title>Acadêmic Papers</title>
     <style>
+        @media (max-width: 360px) {
+            #cloud {
+                margin: 0 auto;
+                width: 100%;
+                height: 60vw;
+                border: 1px solid gray;
+            }
+
+            .container {
+                padding: 0;
+                margin: 0;
+            }
+
+            div.input,
+            input {
+                width: 100%;
+            }
+
+            .publications,
+            .segment {
+                padding: 0 !important;
+            }
+        }
+
+        .card {
+            max-width: 50%;
+        }
+
+        #cloud {
+            margin: 0 auto;
+            border: 1px solid gray;
+            height: 20vw;
+        }
+
         .publication-types {
             display: flex;
         }
@@ -32,6 +66,16 @@
             .years {
                 display: flex;
             }
+
+            .buttons {
+                display: flex;
+                justify-content: space-between;
+            }
+
+            .buttons .button {
+                flex-grow: 1;
+            }
+
         }
 
         .conferencePaper {
@@ -62,19 +106,22 @@
 
 <body>
     <div id="app" class="ui container">
-        
-        <div id="cloud" style="width: 50vw; height: 20vw; margin: 0 auto"></div>
+
+        <div id="cloud"></div>
 
         <div>
 
-            <a class="ui basic button" :class="{ active: notFiltering }" @click="showType = undefined; updateCloud()">
-                Tudo
-            </a>
+            <div class="buttons">
+                <a class="ui basic button" :class="{ active: notFiltering }"
+                    @click="showType = undefined; updateCloud()">
+                    Tudo
+                </a>
 
-            <a v-for="type in types" :key="type.type" class="ui button"
-                :class="[showType == type ? 'active' : '', type.type ]" @click="showType = type; updateCloud()">
-                {{ type.name }}
-            </a>
+                <a v-for="type in types" :key="type.type" class="ui button"
+                    :class="[showType == type ? 'active' : '', type.type ]" @click="showType = type; updateCloud()">
+                    {{ type.name }}
+                </a>
+            </div>
 
             <div class="ui right aligned container" style="margin-top: 1vw">
                 <div class="ui icon input">
@@ -129,10 +176,12 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@2"></script>
     <script src="https://unpkg.com/axios@0.2.1/dist/axios.min.js"></script>
     <script src="https://unpkg.com/semantic-ui@2.3.1/dist/semantic.min.js"></script>
-    
+
     <script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>
+    <script src="https://unpkg.com/tinycolor2@1.4.1/dist/tinycolor-min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tinygradient@1.1.4/browser.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jqcloud2@2.0.3/dist/jqcloud.min.js"></script>
-    
+
     <script>
 
         const GROUP_ID = '2302585'
@@ -165,8 +214,8 @@
 
                 this.years = groupByYear(publications)
                 this.publications = publications
-                
-                this.updateCloud()
+
+                this.createCloud()
             },
             computed: {
                 sortedYears() {
@@ -196,48 +245,66 @@
                 loading() {
                     return this.publications.length == 0
                 },
-                abstractWords() {
-                    
-                    let abstracts = '';
-                    
-                    for(let year of this.sortedYears)
-                    {
-                        for(let publication of year.publications)
-                        {
-                            abstracts += publication.data.abstractNote
-                        }   
-                    }
-                    
-                    const wordsQuantity = {}
-                    
-                    abstracts.split(" ").forEach(word => {
-                        if(!wordsQuantity[word]) {
-                            wordsQuantity[word] = 1
+                joinedAbstracts() {
+                    const visiblePublications = this.sortedYears.map(year => year.publications).flat()
+                    const result = visiblePublications.map(abstractOf).join()
+                    return result;
+                },
+                bestAbstractWords() {
+                    const unusedWords = ['para','that','their','está','this','from','este','have','also','half','with','than','through','trazer','article','allows','mais','contexto','will']
+
+                    return this.joinedAbstracts.split(" ")
+                        .filter(word => word.length > 3)
+                        .filter(word =>
+                            unusedWords.includes(word.toLowerCase()) == false
+                        )
+                },
+                wordsQuantity() {
+                    const words = {}
+
+                    this.bestAbstractWords.forEach(word => {
+                        if (!words[word]) {
+                            words[word] = 1
                         } else {
-                            wordsQuantity[word]++
+                            words[word]++
                         }
                     })
-                    
-                    const wordsArray = []
-                    Object.keys(wordsQuantity).forEach(word=>{
-                        wordsArray.push({
+
+                    return words
+                },
+                wordsWithWeight() {
+                    const result = []
+
+                    const wordsQuantity = this.wordsQuantity;
+
+                    Object.keys(wordsQuantity).forEach(word => {
+                        result.push({
                             text: word,
                             weight: wordsQuantity[word]
                         })
                     })
-                    const unusedWords = ['para','that','their','está','this','from','este','have','also','half']
-                    return wordsArray.filter(word=>word.text.length > 3).filter(word=>
-                        unusedWords.includes(word.text.toLowerCase()) == false
-                    )
+
+                    return result
                 },
             },
             methods: {
-                updateCloud() {
-                    const words = this.abstractWords
-                    $(document).ready(function(){
-                        $('#cloud').jQCloud('destroy')
-                        $('#cloud').jQCloud(words);
+                createCloud() {
+
+                    const words = this.wordsWithWeight
+
+                    $(document).ready(function () {
+                        const gradient = tinygradient('#3b82a8','#c8c84a','#1f97af','#c75461').rgb(words.length)
+                        $('#cloud').jQCloud(words, {
+                            delay: 5,
+                            colors: function (step) {
+                                return gradient[words.length / step]
+                            }
+                        });
                     })
+                },
+                updateCloud() {
+                    const words = this.wordsWithWeight
+                    $('#cloud').jQCloud('update', words);
                 },
                 filterPublication(publication) {
                     if (this.filtering)
@@ -266,6 +333,9 @@
         function linkPublicationsAndAttachments(publications, attachments) {
             for (let publication of publications)
                 addAttachmentsFor(publication, attachments)
+        }
+        function abstractOf(publication) {
+            return publication.data.abstractNote
         }
         function typeOf(item) {
             return item.data.itemType
