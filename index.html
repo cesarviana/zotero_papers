@@ -9,7 +9,6 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jqcloud2@2.0.3/dist/jqcloud.min.css">
     <title>Acadêmic Papers</title>
     <style>
-        
         @media (max-width: 360px) {
             #cloud {
                 margin: 0 auto;
@@ -33,6 +32,10 @@
             }
         }
 
+        .segment {
+            min-height: 70px;
+        }
+
         .publication-types {
             display: flex;
         }
@@ -43,9 +46,9 @@
 
         .publication {
             margin: 0 0 .5vw .5vw;
-            padding: 2vw;
-            border: 1px solid gray;
+            padding: 1vw;
             border-radius: 1vw;
+            width: 100% !important;
         }
 
         h2 {
@@ -72,6 +75,7 @@
                 flex-grow: 1;
                 display: flex;
                 align-items: center;
+                justify-content: center;
             }
 
         }
@@ -103,11 +107,31 @@
 </head>
 
 <body>
-    <div id="app" class="ui container">
+    <div id="app">
 
         <div id="cloud"></div>
 
         <div>
+
+            <div>
+                <h2>
+                    Projetos
+                </h2>
+                <div class="project buttons">
+                    
+                    <a class="ui basic button" :class="{ active: notFiltering }"
+                    @click="selectedProject = undefined; updateCloud()">
+                        Tudo
+                    </a>
+                    
+                    <a v-for="project in projects" :key="project.key" class="ui basic button"
+                    @click="selectedProject = project"
+                    :class="[selectedProject == project ? 'blue':'black']"
+                    >
+                        {{ project.name }}
+                    </a>
+                </div>
+            </div>
 
             <div class="buttons">
                 <a class="ui basic button" :class="{ active: notFiltering }"
@@ -123,7 +147,7 @@
 
             <div class="ui right aligned container" style="margin-top: 1vw">
                 <div class="ui icon input">
-                    <input type="text" placeholder="Pesquisar..." v-model="searchText">
+                    <input type="text" placeholder="Pesquisar..." v-model="searchText" @keyup.enter="updateCloud">
                     <i class="search link icon"></i>
                 </div>
             </div>
@@ -133,27 +157,35 @@
         <div class="ui segment">
             <div v-for="year in sortedYears" :key="year.number" class="years">
                 <h2> {{ year.number }} </h2>
-                <div class="publications ui cards">
-                    <div class="publication card" v-for="publication in year.publications" :key="publication.key"
+                <div class="publications">
+                    <div class="publication ui card" v-for="publication in year.publications" :key="publication.key"
                         :class="publication.data.itemType">
                         <p class="content">
                             <span v-html="publication.citation"></span>
+                            <span v-if="publication.data.DOI">DOI: {{publication.data.DOI}}.</span>
                         </p>
-                        <div class="extra content" style="display:flex; flex-flow:column">
+                        <div class="extra content">
                             <span v-if="publication.data.DOI">
-                                <a :href="`https://doi.org/${publication.data.DOI}`" target="_blank">
+                                <a :href="`https://doi.org/${publication.data.DOI}`" 
+                                    target="_blank"
+                                    class="ui icon basic button"
+                                    title="Acessar via DOI"
+                                >
                                     <i class="icon file outline"></i>
-                                    DOI: {{publication.data.DOI}}.
+                                    DOI
                                 </a>
                             </span>
                             <span v-if="publication.data.url">
-                                <a target="_blank" :href="publication.data.url">
+                                <a target="_blank" :href="publication.data.url"
+                                    class="ui icon basic button">
                                     <i class="icon linkify"></i>
                                     Acessar
                                 </a>
                             </span>
                             <span v-if="!publication.data.url && !publication.data.DOI">
-                                <a target="_blank" :href="`https://google.com.br/search?q=${publication.data.title}`">
+                                <a target="_blank" :href="`https://google.com.br/search?q=${publication.data.title}`"
+                                    class="ui icon basic button"
+                                >
                                     <i class="icon search"></i>
                                     Buscar
                                 </a>
@@ -163,9 +195,10 @@
                 </div>
             </div>
             <div v-if="loading" class="ui active inverted dimmer">
-                <div class="ui text loader">Carregando</div>
+                <div class="ui text loader">Buscando publicações...</div>
+                <p></p>
             </div>
-            <div v-if="sortedYears.length == 0 && publications.length > 0">Nenhum resultado.</div>
+            <div v-if="sortedYears.length == 0 && publications.length > 0">Nenhuma publicação para estes filtros.</div>
 
         </div>
 
@@ -182,7 +215,7 @@
 
     <script>
 
-        const GROUP_ID = '2302585'
+        const GROUP_ID = '4077554'
         const COLLECTION_ID = '83YIGLLI'
 
         const app = new Vue({
@@ -190,6 +223,7 @@
             data: {
                 groupId: GROUP_ID,
                 years: {},
+                projects: [],
                 publications: [],
                 allowedTypes: [
                     { name: 'Artigos de Conferências', type: 'conferencePaper' },
@@ -199,17 +233,20 @@
                     { name: 'Monografias', type: 'thesis' },
                     { name: 'Blogs', type: 'blogPost' },
                 ],
+                selectedProject: undefined,
                 showType: undefined,
                 searchText: ''
             },
             async created() {
-                const items = await getItems(GROUP_ID, COLLECTION_ID)
+                const collections = await getCollections(GROUP_ID)
+                const items = await getAllItems(GROUP_ID)
 
                 const publications = filterPublications(items)
                 const attachments = filterAttachments(items)
 
                 linkPublicationsAndAttachments(publications, attachments)
 
+                this.projects = collections.map(c=>c.data);
                 this.years = groupByYear(publications)
                 this.publications = publications
 
@@ -233,8 +270,14 @@
                 notFiltering() {
                     return !this.filtering
                 },
-                filtering() {
+                filteringType() {
                     return this.showType !== undefined
+                },
+                filteringProject() {
+                    return this.selectedProject !== undefined
+                },
+                filtering() {
+                    return this.filteringType || this.filteringProject
                 },
                 types() {
                     const types = this.publications.map(p => p.data.itemType)
@@ -289,6 +332,10 @@
                 createCloud() {
 
                     const words = this.wordsWithWeight
+                    if(words.length == 0) {
+                        console.warn('No words to put in the cloud')
+                        return;
+                    }
 
                     $(document).ready(function () {
                         const gradient = tinygradient('#3b82a8','#c8c84a','#1f97af','#c75461').rgb(words.length)
@@ -306,8 +353,11 @@
                     $('#cloud').jQCloud('update', words);
                 },
                 filterPublication(publication) {
-                    if (this.filtering)
+                    if (this.filteringType)
                         if (typeOf(publication) != this.showType.type)
+                            return false
+                    if (this.filteringProject)
+                        if (!isInProject(publication, this.selectedProject))
                             return false
                     if (this.searchText.length > 0) {
                         const text = publication.citation.toUpperCase()
@@ -320,6 +370,12 @@
                 }
             }
         })
+        async function getCollections(groupId) {
+            return axios.get(`https://api.zotero.org/groups/${groupId}/collections`)
+        }
+        async function getAllItems(groupId) {
+            return axios.get(`https://api.zotero.org/groups/${groupId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&limit=1000`)
+        }
         async function getItems(groupId, collectionId) {
             return axios.get(`https://api.zotero.org/groups/${groupId}/collections/${collectionId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note`)
         }
@@ -341,6 +397,9 @@
         }
         function areRelated(publication, attachment) {
             return keyOf(publication) == parentKey(attachment)
+        }
+        function isInProject(publication, project) {
+            return publication.data.collections.indexOf(project.key) !== -1
         }
         function keyOf(item) {
             return item.key
