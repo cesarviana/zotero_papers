@@ -54,7 +54,11 @@
         h2 {
             margin-top: 2vw !important;
         }
-
+        
+        h3 {
+            margin-bottom: 5px;
+        }
+        
         @media (min-width: 720px) {
             
             #cloud {
@@ -67,6 +71,8 @@
             }
             
             .buttons {
+                margin-top: 0;
+                margin-bottom: 1.5vw;
                 display: flex;
                 justify-content: space-between;
             }
@@ -111,48 +117,39 @@
 
         <div id="cloud"></div>
 
-        <div>
+        {{ filteringProject ? cache[selectedProject.key].start : '' }}
 
-            <div>
-                <h2>
-                    Projetos
-                </h2>
-                <div class="project buttons">
-                    
-                    <a class="ui basic button" :class="{ active: notFiltering }"
-                    @click="selectedProject = undefined; updateCloud()">
-                        Tudo
-                    </a>
-                    
-                    <a v-for="project in projects" :key="project.key" class="ui basic button"
-                    @click="selectedProject = project"
-                    :class="[selectedProject == project ? 'blue':'black']"
-                    >
-                        {{ project.name }}
-                    </a>
+        <div class="ui form">
+            <div class="three fields">
+            
+                <div class="field">
+
+                    <select name="project" id="project" v-model="selectedProject" @change="loadPublications(replacePublications)" class="ui fluid selection dropdown">
+                        <option :value="undefined">Publicações recentes</option>
+                        <option v-for="project in projects" :key="project.key" :value="project">{{project.name}}</option>
+                    </select>
+
                 </div>
-            </div>
+                <div class="field">
 
-            <div class="buttons">
-                <a class="ui basic button" :class="{ active: notFiltering }"
-                    @click="showType = undefined; updateCloud()">
-                    Tudo
-                </a>
+                    <select name="type" id="type" v-model="showType" class="ui fluid selection dropdown">
+                        <option :value="undefined">Todos os tipos</option>
+                        <option v-for="type in types" :key="type.type" :value="type">{{type.name}}</option>
+                    </select>
 
-                <a v-for="type in types" :key="type.type" class="ui button"
-                    :class="[showType == type ? 'active' : '', type.type ]" @click="showType = type; updateCloud()">
-                    {{ type.name }}
-                </a>
-            </div>
-
-            <div class="ui right aligned container" style="margin-top: 1vw">
-                <div class="ui icon input">
-                    <input type="text" placeholder="Pesquisar..." v-model="searchText" @keyup.enter="updateCloud">
-                    <i class="search link icon"></i>
                 </div>
-            </div>
+                <div class="field">
 
+                    <div class="ui icon input">
+                        <input type="text" placeholder="Pesquisar..." v-model="apiFilters.searchText" @keyup.enter="updateCloud">
+                        <i class="search link icon"></i>
+                    </div>
+                    
+                </div>
+    
+            </div>
         </div>
+        
 
         <div class="ui segment">
             <div v-for="year in sortedYears" :key="year.number" class="years">
@@ -198,7 +195,8 @@
                 <div class="ui text loader">Buscando publicações...</div>
                 <p></p>
             </div>
-            <div v-if="sortedYears.length == 0 && publications.length > 0">Nenhuma publicação para estes filtros.</div>
+            <div v-if="!loading && publications.length == 0">Nenhuma publicação para estes filtros.</div>
+            <button class="ui default button" @click="loadMore">Carregar mais publicações</button>
 
         </div>
 
@@ -218,13 +216,20 @@
         const GROUP_ID = '4077554'
         const COLLECTION_ID = '83YIGLLI'
 
+        const ITEMS_PER_REQUEST = 5
+
         const app = new Vue({
             el: '#app',
             data: {
+                loading: false,
                 groupId: GROUP_ID,
                 years: {},
                 projects: [],
-                publications: [],
+                apiFilters: {
+                    limit: 5,
+                    sort: 'date',
+                    searchText: ''
+                },
                 allowedTypes: [
                     { name: 'Artigos de Conferências', type: 'conferencePaper' },
                     { name: 'Artigos de Revistas', type: 'journalArticle' },
@@ -235,22 +240,25 @@
                 ],
                 selectedProject: undefined,
                 showType: undefined,
-                searchText: ''
+                cache: {
+                    recent: {
+                        start: 0,
+                        publications: []
+                    }
+                }
             },
             async created() {
-                const collections = await getCollections(GROUP_ID)
-                const items = await getAllItems(GROUP_ID)
-
-                const publications = filterPublications(items)
-                const attachments = filterAttachments(items)
-
-                linkPublicationsAndAttachments(publications, attachments)
-
-                this.projects = collections.map(c=>c.data);
-                this.years = groupByYear(publications)
-                this.publications = publications
-
-                this.createCloud()
+                this.loading = true;
+                try {
+                    this.projects = (await getCollections(GROUP_ID))
+                        .map(collection => collection.data)
+                    this.initializeCaches()
+                    await this.loadRecentPublications(this.replacePublications)
+                    this.createCloud()
+                    this.updateCloud()
+                } finally {
+                    this.loading = false;
+                }
             },
             computed: {
                 sortedYears() {
@@ -279,22 +287,30 @@
                 filtering() {
                     return this.filteringType || this.filteringProject
                 },
+                publications() {
+                    let result = []
+                    for(let yearAndPublications of this.sortedYears) {
+                        result = result.concat(yearAndPublications.publications)
+                    }
+                    return result
+                },
                 types() {
                     const types = this.publications.map(p => p.data.itemType)
                     return this.allowedTypes.filter(t => types.includes(t.type))
                 },
-                loading() {
-                    return this.publications.length == 0
+                visiblePublications() {
+                    return this.sortedYears.map(year => year.publications).flat()
                 },
-                joinedAbstracts() {
-                    const visiblePublications = this.sortedYears.map(year => year.publications).flat()
-                    const result = visiblePublications.map(abstractOf).join()
-                    return result;
+                joinedCloudText() {
+                    return this.visiblePublications
+                        .map((publication)=> abstractOf(publication) + ' ' + titleOf(publication))
+                        .filter(text=>text.length > 0)
+                        .join()
                 },
                 bestAbstractWords() {
                     const unusedWords = ['para','that','their','está','this','from','este','have','also','half','with','than','through','trazer','article','allows','mais','contexto','will']
 
-                    return this.joinedAbstracts.split(" ")
+                    return this.joinedCloudText.split(" ")
                         .filter(word => word.length > 3)
                         .filter(word =>
                             unusedWords.includes(word.toLowerCase()) == false
@@ -329,6 +345,99 @@
                 },
             },
             methods: {
+                initializeCaches() {
+                    this.projects.forEach(project=>{
+                        if(!this.hasCacheFor(project))
+                        {
+                            this.cache[project.key] = { start: 0, publications: [] }
+                        }
+                    })
+                },
+                async loadMore() {
+                    this.adjustStartParam()
+                    this.loadPublications(this.appendPublications)
+                },
+                adjustStartParam() {
+                    if(this.filteringProject) {
+                        this.adjustStartParamFor(this.selectedProject)
+                    } else {
+                        this.adjustStartParamForRecentPublications()
+                    }
+                },
+                adjustStartParamFor(project) {
+                    const projectItemsCache = this.cache[project.key]
+                    projectItemsCache.start += ITEMS_PER_REQUEST
+                    projectItemsCache.updated = false
+                },
+                adjustStartParamForRecentPublications(){
+                    this.cache.recent.start += ITEMS_PER_REQUEST
+                    this.cache.recent.updated = false
+                },
+                async loadPublications(callback) {
+                    if(this.filteringProject)
+                        this.loadPublicationsFor(this.selectedProject, callback)
+                    else
+                        this.loadRecentPublications(callback)
+                },
+                async loadPublicationsFor(project, callback){
+                    try {
+                        this.loading = true
+                        
+                        const cache = this.cache[project.key]
+                        
+                        const start = cache.start
+                        const limit = this.apiFilters.limit
+                        const sort = this.apiFilters.sort
+                        
+                        if(cache.updated == false || cache.publications.length == 0)
+                        {
+                            const items = await getItems(GROUP_ID, project.key, start, limit, sort)
+                            const publications = this.convertItemsIntoPublications(items)
+                            cache.publications = publications
+                            cache.updated = true
+                        } 
+
+                        const publications = cache.publications
+                    
+                        callback(publications)
+                        
+                        this.updateCloud()
+                    } finally {
+                        this.loading = false
+                    }
+                },
+                hasCacheFor(project) {
+                    return this.cache[project.key] != undefined
+                },
+                async loadRecentPublications(callback){
+                    const start = this.cache.recent.start
+                    const limit = this.apiFilters.limit
+                    const sort = this.apiFilters.sort
+                    const items = await getRecentItems(GROUP_ID, start, limit, sort)
+                    
+                    const publications = this.convertItemsIntoPublications(items)
+                    
+                    callback(publications)
+                },
+                convertItemsIntoPublications(items) {
+                    const publications = filterPublications(items)
+                    const attachments = filterAttachments(items)
+                    linkPublicationsAndAttachments(publications, attachments)
+                    return publications
+                },
+                replacePublications(publications){
+                    this.years = groupByYear(publications)
+                },
+                appendPublications(publications) {
+                    let newPublications = this.publications.concat(publications)
+                    if(this.filteringProject)
+                    {
+                        this.cache[this.selectedProject.key].publications = newPublications
+                    } else {
+                        this.cache.recent.publications = newPublications
+                    }
+                    this.years = groupByYear(newPublications)
+                },
                 createCloud() {
 
                     const words = this.wordsWithWeight
@@ -359,7 +468,7 @@
                     if (this.filteringProject)
                         if (!isInProject(publication, this.selectedProject))
                             return false
-                    if (this.searchText.length > 0) {
+                    if (this.apiFilters.searchText.length > 0) {
                         const text = publication.citation.toUpperCase()
                         const search = this.searchText.toUpperCase()
                         const notFound = text.indexOf(search) == -1
@@ -373,11 +482,11 @@
         async function getCollections(groupId) {
             return axios.get(`https://api.zotero.org/groups/${groupId}/collections`)
         }
-        async function getAllItems(groupId) {
-            return axios.get(`https://api.zotero.org/groups/${groupId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&limit=1000`)
+        async function getRecentItems(groupId, start, limit, sort) {
+            return axios.get(`https://api.zotero.org/groups/${groupId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}`)
         }
-        async function getItems(groupId, collectionId) {
-            return axios.get(`https://api.zotero.org/groups/${groupId}/collections/${collectionId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note`)
+        async function getItems(groupId, collectionId, start, limit, sort) {
+            return axios.get(`https://api.zotero.org/groups/${groupId}/collections/${collectionId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}`)
         }
         function filterPublications(items) {
             return items.filter(item => typeOf(item) != "attachment")
@@ -391,6 +500,9 @@
         }
         function abstractOf(publication) {
             return publication.data.abstractNote
+        }
+        function titleOf(publication) {
+            return publication.data.title
         }
         function typeOf(item) {
             return item.data.itemType
@@ -417,7 +529,7 @@
         }
         function getYearOf(publication) {
             const matches = publication.data.date.match(/\d{4}/g)
-            if (matches.length > 0)
+            if (matches && matches.length > 0)
                 return new Number(matches[0])
             return "Sem ano"
         }
