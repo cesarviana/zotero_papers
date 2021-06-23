@@ -116,23 +116,23 @@
     <div id="app">
 
         <div id="cloud"></div>
-
+        
         <div class="ui form">
             <div class="three fields">
             
                 <div class="field">
 
-                    <select name="project" id="project" v-model="selectedProject" @change="loadPublications(replacePublications)" class="ui fluid selection dropdown">
-                        <option :value="undefined">Publicações recentes</option>
+                    <select name="project" id="project" v-model="selectedProject" @change="showPublications" class="ui selection">
+                        <option :value="undefined">Todos os projetos</option>
                         <option v-for="project in projects" :key="project" :value="project">{{project}}</option>
                     </select>
 
                 </div>
                 <div class="field">
 
-                    <select name="type" id="type" v-model="showType" class="ui fluid selection dropdown">
-                        <option :value="undefined">Todos os tipos</option>
-                        <option v-for="type in types" :key="type.type" :value="type">{{type.name}}</option>
+                    <select name="type" id="type" v-model="apiFilters.itemType" @change="showPublications" class="ui selection">
+                        <option :value="undefined">Tipos de publicação</option>
+                        <option v-for="type in publicationTypes" :key="type.type" :value="type.type">{{type.name}}</option>
                     </select>
 
                 </div>
@@ -214,7 +214,8 @@
         const GROUP_ID = '4077554'
         const COLLECTION_ID = '83YIGLLI'
 
-        const ITEMS_PER_REQUEST = 10
+        const ITEMS_PER_REQUEST = 7
+        const DEFAULT_CACHE_KEY = 'no_filters'
 
         const app = new Vue({
             el: '#app',
@@ -227,7 +228,8 @@
                     limit: ITEMS_PER_REQUEST,
                     sort: 'date',
                     search: '',
-                    tag: ''
+                    tag: '',
+                    itemType: undefined
                 },
                 publicationTypes: [
                     { name: 'Artigos de Conferências', type: 'conferencePaper' },
@@ -238,10 +240,8 @@
                     { name: 'Blogs', type: 'blogPost' },
                 ],
                 selectedProject: undefined,
-                showType: undefined,
                 cache: {
                     recent: {
-                        start: 0,
                         publications: []
                     }
                 }
@@ -252,7 +252,7 @@
                     this.projects = (await getTags(GROUP_ID))
                         .map(tag => tag.tag)
                     this.initializeCaches()
-                    await this.loadPublications(this.replacePublications)
+                    await this.showPublications()
                     this.createCloud()
                     this.updateCloud()
                 } finally {
@@ -260,6 +260,11 @@
                 }
             },
             computed: {
+                currentCache() {
+                    const project = this.selectedProject || ''
+                    const itemType = this.apiFilters.itemType || ''
+                    return this.cache[project+itemType || DEFAULT_CACHE_KEY ] || this.cache.recent
+                },
                 sortedYears() {
                     const sortedYears = Object.keys(this.years).sort().reverse().map(number => {
                         return {
@@ -270,17 +275,8 @@
 
                     return sortedYears.filter(it => it.publications.length > 0)
                 },
-                notFiltering() {
-                    return !this.filtering
-                },
-                filteringType() {
-                    return this.showType !== undefined
-                },
                 filteringProject() {
                     return this.selectedProject !== undefined
-                },
-                filtering() {
-                    return this.filteringType || this.filteringProject
                 },
                 selectedProjectCache() {
                     if(!this.filteringProject)
@@ -293,10 +289,6 @@
                         result = result.concat(yearAndPublications.publications)
                     }
                     return result
-                },
-                types() {
-                    const types = this.publications.map(p => p.data.itemType)
-                    return this.publicationTypes.filter(t => types.includes(t.type))
                 },
                 visiblePublications() {
                     return this.sortedYears.map(year => year.publications).flat()
@@ -346,63 +338,52 @@
             },
             methods: {
                 initializeCaches() {
+                    this.cache = {}
                     this.projects.forEach(project=>{
-                        if(!this.hasCacheFor(project))
-                        {
-                            this.cache[project] = { start: 0, publications: [] }
-                        }
+                        this.cache[DEFAULT_CACHE_KEY] = { publications: [] }
+                        // cache / project
+                        this.cache[project] = { publications: [] }
+                        this.publicationTypes.forEach(itemType=>{
+                            // cache / project / itemType
+                            this.cache[project+itemType.type] = { publications: [] }
+                        })
+                    })
+                    this.publicationTypes.forEach(itemType=>{
+                        // cache / itemType
+                        this.cache[itemType.type] = { publications: [] }
                     })
                 },
                 async loadMore() {
-                    this.adjustStartParam()
-                    this.loadPublications(this.appendPublications)
+                    const publications = await this.loadPublications()
+                    this.appendPublications(publications)
+                    this.updateCloud()
                 },
-                adjustStartParam() {
-                    if(this.filteringProject) {
-                        this.adjustStartParamFor(this.selectedProject)
-                    } else {
-                        this.adjustStartParamForRecentPublications()
-                    }
+                async showPublications() {
+                    const cache = this.currentCache
+                    const hasCache = cache.publications.length > 0
+                    
+                    const publications = hasCache ? cache.publications : await this.loadPublications()
+                    
+                    this.replacePublications(publications)
+                    
+                    this.updateCloud()
                 },
-                adjustStartParamFor(project) {
-                    this.selectedProjectCache.start += ITEMS_PER_REQUEST
-                    this.selectedProjectCache.updated = false
-                },
-                adjustStartParamForRecentPublications(){
-                    this.cache.recent.start += ITEMS_PER_REQUEST
-                    this.cache.recent.updated = false
-                },
-                async loadPublications(callback) {
+                async loadPublications() {
                     this.loading = true
                     try {
-                        
-                        const cache = this.cache[this.selectedProject] || this.cache.recent
+                        const cache = this.currentCache
                         
                         const filters = { 
                             ...this.apiFilters,
-                            start: cache.start, 
-                            tag: this.selectedProject || ''
+                            start: cache.publications.length, 
+                            tag: this.selectedProject
                         }
                         
-                        if(cache.updated == false || cache.publications.length == 0)
-                        {
-                            const items = await getItems(GROUP_ID, filters)
-                            const publications = this.convertItemsIntoPublications(items)
-                            cache.publications = publications
-                            cache.updated = true
-                        } 
-
-                        const publications = cache.publications
-                    
-                        callback(publications)
-                        
-                        this.updateCloud()
+                        const items = await getItems(GROUP_ID, filters)
+                        return this.convertItemsIntoPublications(items)
                     } finally {
                         this.loading = false
                     }
-                },
-                hasCacheFor(project) {
-                    return this.cache[project] != undefined
                 },
                 convertItemsIntoPublications(items) {
                     const publications = filterPublications(items)
@@ -411,17 +392,17 @@
                     return publications
                 },
                 replacePublications(publications){
+                    this.currentCache.publications = publications
                     this.years = groupByYear(publications)
                 },
                 appendPublications(publications) {
                     let newPublications = this.publications.concat(publications)
-                    if(this.filteringProject)
-                    {
-                        this.selectedProjectCache.publications = newPublications
-                    } else {
-                        this.cache.recent.publications = newPublications
-                    }
+                    this.currentCache.publications = newPublications
                     this.years = groupByYear(newPublications)
+                },
+                search() {
+                    this.initializeCaches()
+                    this.showPublications()
                 },
                 createCloud() {
 
@@ -445,16 +426,6 @@
                 updateCloud() {
                     const words = this.wordsWithWeight
                     $('#cloud').jQCloud('update', words);
-                },
-                search() {
-                    if(this.filteringProject) {
-                        this.selectedProjectCache.updated = false
-                        this.selectedProjectCache.start = 0
-                    } else {
-                        this.cache.recent.updated = false
-                        this.cache.recent.start = 0
-                    }
-                    this.loadPublications(this.replacePublications)
                 }
             }
         })
@@ -462,8 +433,8 @@
             return axios.get(`https://api.zotero.org/groups/${groupId}/tags`)
         }
         async function getItems(groupId, filters) {
-            const {start, limit, sort, search, tag} = filters
-            return axios.get(`https://api.zotero.org/groups/${groupId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}&q=${search || ''}&tag=${tag}`)
+            const {start, limit, sort, search, tag, itemType} = filters
+            return axios.get(`https://api.zotero.org/groups/${groupId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}&q=${search || ''}&tag=${tag || ''}&itemType=${itemType || ''}`)
         }
         function filterPublications(items) {
             return items.filter(item => typeOf(item) != "attachment")
