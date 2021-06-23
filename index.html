@@ -124,7 +124,7 @@
 
                     <select name="project" id="project" v-model="selectedProject" @change="loadPublications(replacePublications)" class="ui fluid selection dropdown">
                         <option :value="undefined">Publicações recentes</option>
-                        <option v-for="project in projects" :key="project.key" :value="project">{{project.name}}</option>
+                        <option v-for="project in projects" :key="project" :value="project">{{project}}</option>
                     </select>
 
                 </div>
@@ -214,7 +214,7 @@
         const GROUP_ID = '4077554'
         const COLLECTION_ID = '83YIGLLI'
 
-        const ITEMS_PER_REQUEST = 5
+        const ITEMS_PER_REQUEST = 10
 
         const app = new Vue({
             el: '#app',
@@ -224,9 +224,10 @@
                 years: {},
                 projects: [],
                 apiFilters: {
-                    limit: 10,
+                    limit: ITEMS_PER_REQUEST,
                     sort: 'date',
-                    search: ''
+                    search: '',
+                    tag: ''
                 },
                 publicationTypes: [
                     { name: 'Artigos de Conferências', type: 'conferencePaper' },
@@ -248,10 +249,10 @@
             async created() {
                 this.loading = true;
                 try {
-                    this.projects = (await getCollections(GROUP_ID))
-                        .map(collection => collection.data)
+                    this.projects = (await getTags(GROUP_ID))
+                        .map(tag => tag.tag)
                     this.initializeCaches()
-                    await this.loadRecentPublications(this.replacePublications)
+                    await this.loadPublications(this.replacePublications)
                     this.createCloud()
                     this.updateCloud()
                 } finally {
@@ -265,10 +266,6 @@
                             number,
                             publications: this.years[number].publications
                         }
-                    })
-
-                    sortedYears.forEach(year => {
-                        year.publications = year.publications.filter(p => this.filterPublication(p))
                     })
 
                     return sortedYears.filter(it => it.publications.length > 0)
@@ -288,7 +285,7 @@
                 selectedProjectCache() {
                     if(!this.filteringProject)
                         throw 'Not filtering project, so there is no project cache to select'
-                    return this.cache[this.selectedProject.key]
+                    return this.cache[this.selectedProject]
                 },
                 publications() {
                     let result = []
@@ -352,7 +349,7 @@
                     this.projects.forEach(project=>{
                         if(!this.hasCacheFor(project))
                         {
-                            this.cache[project.key] = { start: 0, publications: [] }
+                            this.cache[project] = { start: 0, publications: [] }
                         }
                     })
                 },
@@ -376,25 +373,20 @@
                     this.cache.recent.updated = false
                 },
                 async loadPublications(callback) {
-                    if(this.filteringProject)
-                        this.loadPublicationsFor(this.selectedProject, callback)
-                    else
-                        this.loadRecentPublications(callback)
-                },
-                async loadPublicationsFor(project, callback){
                     this.loading = true
                     try {
                         
-                        const cache = this.cache[project.key]
+                        const cache = this.cache[this.selectedProject] || this.cache.recent
                         
                         const filters = { 
                             ...this.apiFilters,
                             start: cache.start, 
+                            tag: this.selectedProject || ''
                         }
                         
                         if(cache.updated == false || cache.publications.length == 0)
                         {
-                            const items = await getItems(GROUP_ID, project.key, filters)
+                            const items = await getItems(GROUP_ID, filters)
                             const publications = this.convertItemsIntoPublications(items)
                             cache.publications = publications
                             cache.updated = true
@@ -410,24 +402,7 @@
                     }
                 },
                 hasCacheFor(project) {
-                    return this.cache[project.key] != undefined
-                },
-                async loadRecentPublications(callback){
-                    this.loading = true
-                    try {
-                        const filters = { 
-                            ...this.apiFilters,
-                            start: this.cache.recent.start, 
-                        }
-                        
-                        const items = await getRecentItems(GROUP_ID, filters)
-                        
-                        const publications = this.convertItemsIntoPublications(items)
-                        
-                        callback(publications)
-                    } finally {
-                        this.loading = false
-                    }
+                    return this.cache[project] != undefined
                 },
                 convertItemsIntoPublications(items) {
                     const publications = filterPublications(items)
@@ -480,28 +455,15 @@
                         this.cache.recent.start = 0
                     }
                     this.loadPublications(this.replacePublications)
-                },
-                filterPublication(publication) {
-                    if (this.filteringType)
-                        if (typeOf(publication) != this.showType.type)
-                            return false
-                    if (this.filteringProject)
-                        if (!isInProject(publication, this.selectedProject))
-                            return false
-                    return true
                 }
             }
         })
-        async function getCollections(groupId) {
-            return axios.get(`https://api.zotero.org/groups/${groupId}/collections`)
+        async function getTags(groupId) {
+            return axios.get(`https://api.zotero.org/groups/${groupId}/tags`)
         }
-        async function getRecentItems(groupId, filters) {
-            const {start, limit, sort, search} = filters
-            return axios.get(`https://api.zotero.org/groups/${groupId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}&q=${search || '' }`)
-        }
-        async function getItems(groupId, collectionId, filters) {
-            const {start, limit, sort, search} = filters
-            return axios.get(`https://api.zotero.org/groups/${groupId}/collections/${collectionId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}&q=${search || ''}`)
+        async function getItems(groupId, filters) {
+            const {start, limit, sort, search, tag} = filters
+            return axios.get(`https://api.zotero.org/groups/${groupId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}&q=${search || ''}&tag=${tag}`)
         }
         function filterPublications(items) {
             return items.filter(item => typeOf(item) != "attachment")
@@ -524,9 +486,6 @@
         }
         function areRelated(publication, attachment) {
             return keyOf(publication) == parentKey(attachment)
-        }
-        function isInProject(publication, project) {
-            return publication.data.collections.indexOf(project.key) !== -1
         }
         function keyOf(item) {
             return item.key
