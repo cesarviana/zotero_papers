@@ -117,8 +117,6 @@
 
         <div id="cloud"></div>
 
-        {{ filteringProject ? cache[selectedProject.key].start : '' }}
-
         <div class="ui form">
             <div class="three fields">
             
@@ -141,8 +139,8 @@
                 <div class="field">
 
                     <div class="ui icon input">
-                        <input type="text" placeholder="Pesquisar..." v-model="apiFilters.searchText" @keyup.enter="updateCloud">
-                        <i class="search link icon"></i>
+                        <input type="text" placeholder="Pesquisar..." v-model="apiFilters.search" @keyup.enter="search">
+                        <i class="search link icon" @click="search"></i>
                     </div>
                     
                 </div>
@@ -196,7 +194,7 @@
                 <p></p>
             </div>
             <div v-if="!loading && publications.length == 0">Nenhuma publicação para estes filtros.</div>
-            <button class="ui default button" @click="loadMore">Carregar mais publicações</button>
+            <button v-else class="ui default fluid button" @click="loadMore">Carregar mais publicações</button>
 
         </div>
 
@@ -226,11 +224,11 @@
                 years: {},
                 projects: [],
                 apiFilters: {
-                    limit: 5,
+                    limit: 10,
                     sort: 'date',
-                    searchText: ''
+                    search: ''
                 },
-                allowedTypes: [
+                publicationTypes: [
                     { name: 'Artigos de Conferências', type: 'conferencePaper' },
                     { name: 'Artigos de Revistas', type: 'journalArticle' },
                     { name: 'Livros', type: 'book' },
@@ -287,6 +285,11 @@
                 filtering() {
                     return this.filteringType || this.filteringProject
                 },
+                selectedProjectCache() {
+                    if(!this.filteringProject)
+                        throw 'Not filtering project, so there is no project cache to select'
+                    return this.cache[this.selectedProject.key]
+                },
                 publications() {
                     let result = []
                     for(let yearAndPublications of this.sortedYears) {
@@ -296,7 +299,7 @@
                 },
                 types() {
                     const types = this.publications.map(p => p.data.itemType)
-                    return this.allowedTypes.filter(t => types.includes(t.type))
+                    return this.publicationTypes.filter(t => types.includes(t.type))
                 },
                 visiblePublications() {
                     return this.sortedYears.map(year => year.publications).flat()
@@ -365,9 +368,8 @@
                     }
                 },
                 adjustStartParamFor(project) {
-                    const projectItemsCache = this.cache[project.key]
-                    projectItemsCache.start += ITEMS_PER_REQUEST
-                    projectItemsCache.updated = false
+                    this.selectedProjectCache.start += ITEMS_PER_REQUEST
+                    this.selectedProjectCache.updated = false
                 },
                 adjustStartParamForRecentPublications(){
                     this.cache.recent.start += ITEMS_PER_REQUEST
@@ -380,18 +382,19 @@
                         this.loadRecentPublications(callback)
                 },
                 async loadPublicationsFor(project, callback){
+                    this.loading = true
                     try {
-                        this.loading = true
                         
                         const cache = this.cache[project.key]
                         
-                        const start = cache.start
-                        const limit = this.apiFilters.limit
-                        const sort = this.apiFilters.sort
+                        const filters = { 
+                            ...this.apiFilters,
+                            start: cache.start, 
+                        }
                         
                         if(cache.updated == false || cache.publications.length == 0)
                         {
-                            const items = await getItems(GROUP_ID, project.key, start, limit, sort)
+                            const items = await getItems(GROUP_ID, project.key, filters)
                             const publications = this.convertItemsIntoPublications(items)
                             cache.publications = publications
                             cache.updated = true
@@ -410,14 +413,21 @@
                     return this.cache[project.key] != undefined
                 },
                 async loadRecentPublications(callback){
-                    const start = this.cache.recent.start
-                    const limit = this.apiFilters.limit
-                    const sort = this.apiFilters.sort
-                    const items = await getRecentItems(GROUP_ID, start, limit, sort)
-                    
-                    const publications = this.convertItemsIntoPublications(items)
-                    
-                    callback(publications)
+                    this.loading = true
+                    try {
+                        const filters = { 
+                            ...this.apiFilters,
+                            start: this.cache.recent.start, 
+                        }
+                        
+                        const items = await getRecentItems(GROUP_ID, filters)
+                        
+                        const publications = this.convertItemsIntoPublications(items)
+                        
+                        callback(publications)
+                    } finally {
+                        this.loading = false
+                    }
                 },
                 convertItemsIntoPublications(items) {
                     const publications = filterPublications(items)
@@ -432,7 +442,7 @@
                     let newPublications = this.publications.concat(publications)
                     if(this.filteringProject)
                     {
-                        this.cache[this.selectedProject.key].publications = newPublications
+                        this.selectedProjectCache.publications = newPublications
                     } else {
                         this.cache.recent.publications = newPublications
                     }
@@ -461,6 +471,16 @@
                     const words = this.wordsWithWeight
                     $('#cloud').jQCloud('update', words);
                 },
+                search() {
+                    if(this.filteringProject) {
+                        this.selectedProjectCache.updated = false
+                        this.selectedProjectCache.start = 0
+                    } else {
+                        this.cache.recent.updated = false
+                        this.cache.recent.start = 0
+                    }
+                    this.loadPublications(this.replacePublications)
+                },
                 filterPublication(publication) {
                     if (this.filteringType)
                         if (typeOf(publication) != this.showType.type)
@@ -468,13 +488,6 @@
                     if (this.filteringProject)
                         if (!isInProject(publication, this.selectedProject))
                             return false
-                    if (this.apiFilters.searchText.length > 0) {
-                        const text = publication.citation.toUpperCase()
-                        const search = this.searchText.toUpperCase()
-                        const notFound = text.indexOf(search) == -1
-                        if (notFound)
-                            return false
-                    }
                     return true
                 }
             }
@@ -482,11 +495,13 @@
         async function getCollections(groupId) {
             return axios.get(`https://api.zotero.org/groups/${groupId}/collections`)
         }
-        async function getRecentItems(groupId, start, limit, sort) {
-            return axios.get(`https://api.zotero.org/groups/${groupId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}`)
+        async function getRecentItems(groupId, filters) {
+            const {start, limit, sort, search} = filters
+            return axios.get(`https://api.zotero.org/groups/${groupId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}&q=${search || '' }`)
         }
-        async function getItems(groupId, collectionId, start, limit, sort) {
-            return axios.get(`https://api.zotero.org/groups/${groupId}/collections/${collectionId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}`)
+        async function getItems(groupId, collectionId, filters) {
+            const {start, limit, sort, search} = filters
+            return axios.get(`https://api.zotero.org/groups/${groupId}/collections/${collectionId}/items?format=json&include=data,citation&style=associacao-brasileira-de-normas-tecnicas-note&start=${start}&limit=${limit}&sort=${sort}&q=${search || ''}`)
         }
         function filterPublications(items) {
             return items.filter(item => typeOf(item) != "attachment")
@@ -537,17 +552,17 @@
             return years[year] === undefined
         }
         function groupByYear(publications) {
-            const years = {}
+            const result = {}
             for (let publication of publications) {
                 const year = getYearOf(publication)
-                if (isNew(year, years)) {
-                    years[year] = {
+                if (isNew(year, result)) {
+                    result[year] = {
                         publications: []
                     }
                 }
-                years[year].publications.push(publication)
+                result[year].publications.push(publication)
             }
-            return years;
+            return result;
         }
     </script>
 </body>
